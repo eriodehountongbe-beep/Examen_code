@@ -1,0 +1,141 @@
+////Nom du calcul
+string Name="Exam  multiplicateurs";
+//Construction Domaine//
+// ============================================================
+// Maillage : Carré avec trou circulaire
+// Déformation d'un carré avec un trou - Mécanique numérique
+// ============================================================
+
+// Paramètres géométriques
+real a = 1.0;    // demi-côté du carré
+real R = 0.3;    // rayon du trou circulaire
+
+// Nombre de points sur chaque frontière
+int ncote = 30;   // points sur chaque côté du carré
+int ntrou = 60;   // points sur le trou (plus fin = meilleure qualité)
+
+// ============================================================
+// Définition des frontières (sens trigonométrique pour l'extérieur,
+// sens horaire pour le trou intérieur)
+// ============================================================
+
+// Frontière 1 : bas (y = -a), de gauche à droite
+border B1(t=-a, a) {x =t; y =-a; label = 1;}
+// Frontière 2 : droite (x = a), de bas en haut — chargement F
+border B2(t=-a, a) {x =a; y =t; label = 2;}
+// Frontière 3 : haut (y = a), de droite à gauche
+border B3(t=a, -a) {x =t; y = a; label = 3;}
+// Frontière 4 : gauche (x = -a), de haut en bas
+border B4(t=a, -a) {x =-a; y =t;label = 4;}
+// Frontière 5 : trou circulaire (sens horaire = intérieur exclu)
+border B5(t=0,1) { x = R * cos(-2*pi*(t));y = R * sin(-2*pi*(t));label = 5;}
+
+// ============================================================
+// Construction du maillage
+// ============================================================
+mesh Th = buildmesh(B1(ncote) +B2(ncote) +B3(ncote) +B4(ncote) +B5(ntrou));
+
+// ============================================================
+// Affichage et sauvegarde
+// ============================================================
+plot(Th, ps="mesh.eps", wait=1) ;
+
+cout << "Nombre de triangles : " << Th.nt << endl;
+cout << "Nombre de sommets   : " << Th.nv << endl;
+
+
+//Espace ELEMENTS FINI///
+fespace Vh(Th,P2);
+Vh ux,uy,vx,vy;
+Vh p, q;
+///////////////////////////////
+//// constante de matériau
+real mu=1, lambda=1;
+// force
+real rhobx=0, rhoby=0;// force volumique
+real F=0.1, Un=0; // forces imposeés
+real  U=0.25*R; // conditions aux limites en deplacements
+real delta=0.0000001; // coefficient de Penalisation
+///Formulation varitionnelle
+problem PlanMultiplicateurs(ux,uy,p, vx,vy,q)=// ajouter p et q
+////formr bilineaire
+int2d(Th)(lambda*(dx(ux)+dy(uy))*(dx(vx)+dy(vy))+ mu*(dx(ux)*dx(vx)+dy(uy)*dy(vy)+0.5*(dx(uy)+dy(ux))*(dx(vy)+dy(vx))))  // forme bilineaire
++int1d(Th,5)((ux*N.x+uy*N.y)*q-(vx*N.x+vy*N.y)*p)// forme bilineare lagrangienne
++int2d(Th)(p*q*delta)// renndre la matrice inversible  avec une petite perturbation
+/////////forme lineaire
+-int1d(Th,2)(F*(-vx))-int2d(Th)(rhobx*vx+rhoby*vy) //forme linaire
+-int1d(Th,5)(Un*q);// terme libre lagrnagien
+ // conditions aux limites en deplacements
+///////////////
+//Execution///
+PlanMultiplicateurs;
+///////////////
+
+/////Visualisation  FreeFem
+plot(Th,[ux,uy], fill=true, value=true,ps="SolMod.eps", wait=1);/// plot FreeFem de la solution
+
+////contraintes
+fespace Wh(Th,P1dc);
+Wh sxx, syy, sxy,szz,pres,deviateur;
+////loi de Hoke
+szz=lambda*(dx(ux)+dy(uy));
+sxx=szz+2*mu*dx(ux);
+sxy=2*mu*0.5*(dy(ux)+dx(uy));
+syy=szz+2*mu*dy(uy);
+pres=(sxx+syy+szz)/3.; //  contrainte moyenne
+deviateur=sqrt(1.5*((sxx-pres)^2+(syy-pres)^2+(szz-pres)^2+2*sxy^2));
+cout<<"DevMax="<<deviateur[].max<<endl;// a comparere avac le seuil de plasticité
+// Calcul de Fmax (critere de von Mises : |sigmaD| < tau0)
+real tau0 = 1.0;
+real Fmax = tau0 * F / deviateur[].max;
+cout << "Fmax = " << Fmax << endl;
+plot(Th,deviateur, fill=true,value=true, ps="Dev.eps", wait=1);/// plot FreeFem de la solution
+plot(Th,pres, fill=true,value=true, ps="Pres.eps", wait=1);/// plot FreeFem de la solution
+////////////////////////////////////////////
+
+///////////////////Visualisation vtk
+fespace Rh(Th,P1dc);//espace de visualisation
+Rh   Xdes=x, Ydes=y, Zdes=0, devdes;
+int id;
+///visualisation maillage
+ofstream par("Maillage."+Name+".vtk"); // non du fichier qui contient le maillage
+Zdes=0;
+par <<"# vtk DataFile Version 1.0" <<endl;
+par <<"2D Unstructured Grid of Linear Triangles" <<endl;
+par <<"ASCII" <<endl;
+par <<" " <<endl;
+par <<"DATASET UNSTRUCTURED_GRID" <<endl;
+par <<"POINTS " << Rh.ndof<< " float" <<endl;
+for (id=0;id<Rh.ndof;id++) {par<< Xdes[][id] <<" "<< Ydes[][id]<<"  "<<  Zdes[][id]<<endl; }
+par <<"CELLS " <<  Rh.nt<< " " << (Rh.ndofK+1)*Rh.nt<<endl;
+for (id=0;id<Rh.nt;id++) {par<<"3 "<< Rh(id,0) <<" "<< Rh(id,1)<<" "<<Rh(id,2)<<endl; }
+par <<" " <<endl;
+par <<"CELL_TYPES " <<  Rh.nt<<endl;
+for (id=0;id<Rh.nt;id++) {par<<"5"<<endl; }
+///visualisation  de la piece deformée
+ofstream paru("Results"+Name+".vtk"); // non du fichier qui contient le maillage
+real mag=1;
+Xdes=x+mag*ux; Ydes=y+mag*uy;
+paru <<"# vtk DataFile Version 1.0" <<endl;
+paru <<"2D Unstructured Grid of Linear Triangles" <<endl;
+paru <<"ASCII" <<endl;
+paru <<" " <<endl;
+paru <<"DATASET UNSTRUCTURED_GRID" <<endl;
+paru <<"POINTS " << Rh.ndof<< " float" <<endl;
+for (id=0;id<Rh.ndof;id++) {paru<< Xdes[][id] <<" "<< Ydes[][id]<<"  "<<  Zdes[][id]<<endl; }
+paru <<"CELLS " <<  Rh.nt<< " " << (Rh.ndofK+1)*Rh.nt<<endl;
+for (id=0;id<Rh.nt;id++) {paru<<"3 "<< Rh(id,0) <<" "<< Rh(id,1)<<" "<<Rh(id,2)<<endl; }
+paru <<" " <<endl;
+paru <<"CELL_TYPES " <<  Rh.nt<<endl;
+for (id=0;id<Rh.nt;id++) {paru<<"5"<<endl; }
+// affichage sur la piece  déformée de la contrainte de Von-Mises
+paru <<" " <<endl;
+paru <<"POINT_DATA " <<  Rh.ndof<<endl;
+paru <<"SCALARS ContrainteVonMises float"<<endl;
+paru <<"LOOKUP_TABLE default " <<endl;
+devdes=deviateur;
+for (id=0;id<Rh.ndof;id++) {paru<<  devdes[][id]<<endl; }
+paru <<"SCALARS ContrainteMoyenne float"<<endl;
+paru <<"LOOKUP_TABLE default " <<endl;
+devdes=pres;
+for (id=0;id<Rh.ndof;id++) {paru<<  devdes[][id]<<endl; }
